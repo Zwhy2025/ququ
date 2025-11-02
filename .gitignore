@@ -153,3 +153,4 @@ temp/
 .gyprc
 
 python
+*.egg-info/

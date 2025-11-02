@@ -64,15 +64,19 @@ class FunASRManager {
 
   getEmbeddedPythonPath() {
     // 获取嵌入式Python路径
+    // Windows上使用python.exe，Unix系统使用python3.11
+    const isWindows = process.platform === 'win32';
+    const pythonExecutable = isWindows ? 'python.exe' : 'python3';
+    
     if (process.env.NODE_ENV === "development") {
-      return path.join(__dirname, "..", "..", "python", "bin", "python3.11");
+      return path.join(__dirname, "..", "..", "python", "bin", pythonExecutable);
     } else {
       return path.join(
         process.resourcesPath,
         "app.asar.unpacked",
         "python",
         "bin",
-        "python3.11"
+        pythonExecutable
       );
     }
   }
@@ -877,13 +881,23 @@ class FunASRManager {
   async findPythonExecutableWithFallback() {
     // 保留原有的查找逻辑作为开发时的回退方案
     const projectRoot = path.join(__dirname, "..", "..");
+    const isWindows = process.platform === 'win32';
       
-    const possiblePaths = [
-      // 优先使用 uv 虚拟环境中的 Python
+    const possiblePaths = isWindows ? [
+      // Windows: 优先使用 uv 虚拟环境中的 Python
+      path.join(projectRoot, ".venv", "Scripts", "python.exe"),
+      path.join(projectRoot, ".venv", "Scripts", "python3.exe"),
+      // Windows系统路径
+      "python.exe",
+      "python3.exe",
+      "python3.11.exe",
+      "python",
+    ] : [
+      // Unix: 优先使用 uv 虚拟环境中的 Python
       path.join(projectRoot, ".venv", "bin", "python3.11"),
       path.join(projectRoot, ".venv", "bin", "python3"),
       path.join(projectRoot, ".venv", "bin", "python"),
-      // 然后尝试系统路径
+      // Unix系统路径
       "python3.11",
       "python3",
       "python",

@@ -135,7 +135,26 @@ export const useRecording = () => {
         const transcriptionResult = await window.electronAPI.transcribeAudio(uint8Array);
 
         if (transcriptionResult.success) {
-          const raw_text = transcriptionResult.text;
+          const raw_text = transcriptionResult.text || transcriptionResult.raw_text || '';
+          
+          // 检查转录文本是否为空
+          if (!raw_text || raw_text.trim().length === 0) {
+            // 文本为空时，给用户友好提示
+            if (window.electronAPI && window.electronAPI.log) {
+              window.electronAPI.log('warn', '转录结果为空，可能是音频中没有检测到语音');
+            }
+            // 通知UI转录完成但文本为空
+            if (window.onTranscriptionComplete) {
+              window.onTranscriptionComplete({ 
+                ...transcriptionResult, 
+                text: '',
+                raw_text: '',
+                enhanced_by_ai: false,
+                isEmpty: true
+              });
+            }
+            return { ...transcriptionResult, isEmpty: true };
+          }
           
           // 准备转录数据
           const transcriptionData = {
@@ -192,13 +211,30 @@ export const useRecording = () => {
               }
 
               // 保存转录数据（只保存一次）
+              // 检查文本是否为空，如果为空则不保存
+              const finalText = finalData.text || finalData.raw_text || '';
+              if (!finalText || finalText.trim().length === 0) {
+                if (window.electronAPI && window.electronAPI.log) {
+                  window.electronAPI.log('warn', '转录文本为空，跳过保存');
+                }
+                // 不抛出错误，只是跳过保存
+                return { ...transcriptionResult, enhanced_by_ai: false };
+              }
+
               if (window.electronAPI) {
                 if (window.electronAPI && window.electronAPI.log) {
                   window.electronAPI.log('info', '准备保存转录数据:', finalData);
                 }
-                const savedResult = await window.electronAPI.saveTranscription(finalData);
-                if (window.electronAPI && window.electronAPI.log) {
-                  window.electronAPI.log('info', '转录数据保存成功:', savedResult);
+                try {
+                  const savedResult = await window.electronAPI.saveTranscription(finalData);
+                  if (window.electronAPI && window.electronAPI.log) {
+                    window.electronAPI.log('info', '转录数据保存成功:', savedResult);
+                  }
+                } catch (saveError) {
+                  // 如果保存失败（例如文本为空），记录错误但不影响其他流程
+                  if (window.electronAPI && window.electronAPI.log) {
+                    window.electronAPI.log('error', '保存转录数据失败:', saveError);
+                  }
                 }
 
                 // 通知UI更新并触发复制操作

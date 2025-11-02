@@ -280,6 +280,17 @@ export default function App() {
   // 处理录音完成（FunASR识别完成）
   const handleRecordingComplete = useCallback(async (transcriptionResult) => {
     console.log("🎤 handleRecordingComplete 被调用:", transcriptionResult);
+    
+    // 检查是否是空转录结果
+    if (transcriptionResult.isEmpty || 
+        (transcriptionResult.success && (!transcriptionResult.text || transcriptionResult.text.trim().length === 0))) {
+      console.log("⚠️ 转录结果为空");
+      toast.warning("未检测到语音", {
+        description: "可能是录音时间过短或音频中未包含有效语音，请重新录音"
+      });
+      return;
+    }
+    
     if (transcriptionResult.success && transcriptionResult.text) {
       console.log("✅ 转录成功，文本:", transcriptionResult.text);
       // 立即显示FunASR识别的原始文本
@@ -297,6 +308,9 @@ export default function App() {
       toast.success("🎤 语音识别完成，AI正在优化文本...");
     } else {
       console.log("❌ 转录失败或无文本:", transcriptionResult);
+      toast.error("转录失败", {
+        description: transcriptionResult.error || "语音识别过程中发生错误"
+      });
     }
   }, []);
 
