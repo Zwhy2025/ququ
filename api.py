@@ -1,8 +1,10 @@
 from openai import OpenAI
 
+# 注意：请将 YOUR_API_KEY 替换为您自己的API密钥
+# 此文件仅作为示例，实际应用中API密钥应通过应用设置配置
 client = OpenAI(
     base_url='https://api-inference.modelscope.cn/v1',
-    api_key='ms-3d1072a4-1f51-4852-a7bf-58ab9888dd97', # ModelScope Token
+    api_key='YOUR_API_KEY', # 请替换为您的ModelScope Token
 )
 
 response = client.chat.completions.create(

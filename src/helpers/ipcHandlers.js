@@ -1066,8 +1066,7 @@ ${text}
       this.logger.info('开始AI请求，URL:', requestUrl);
       this.logger.info('使用的API Key:', {
         preview: apiKeyPreview,
-        length: apiKey.length,
-        matches: apiKey === 'ms-3d1072a4-1f51-4852-a7bf-58ab9888dd97' ? 'YES' : 'NO (使用不同的API Key)'
+        length: apiKey.length
       });
       let response;
       try {
@@ -1178,8 +1177,8 @@ ${text}
         model = testConfig.ai_model?.trim() || 'Qwen/Qwen3-30B-A3B-Instruct-2507';
         this.logger.info('使用临时测试配置:', { baseUrl, model, apiKeyLength: apiKey?.length || 0 });
       } else {
-        apiKey = await this.databaseManager.getSetting('ai_api_key') || 'ms-3d1072a4-1f51-4852-a7bf-58ab9888dd97';
-        apiKey = apiKey ? apiKey.trim() : 'ms-3d1072a4-1f51-4852-a7bf-58ab9888dd97';
+        apiKey = await this.databaseManager.getSetting('ai_api_key') || '';
+        apiKey = apiKey ? apiKey.trim() : '';
         baseUrl = await this.databaseManager.getSetting('ai_base_url') || 'https://api-inference.modelscope.cn/v1';
         baseUrl = baseUrl ? baseUrl.trim() : 'https://api-inference.modelscope.cn/v1';
         model = await this.databaseManager.getSetting('ai_model') || 'Qwen/Qwen3-30B-A3B-Instruct-2507';

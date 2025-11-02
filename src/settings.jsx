@@ -9,7 +9,7 @@ import HotkeySettings from "./components/HotkeySettings";
 
 const SettingsPage = () => {
   const [settings, setSettings] = useState({
-    ai_api_key: "ms-3d1072a4-1f51-4852-a7bf-58ab9888dd97",
+    ai_api_key: "",
     ai_base_url: "https://api-inference.modelscope.cn/v1",
     ai_model: "Qwen/Qwen3-30B-A3B-Instruct-2507",
     enable_ai_optimization: true
@@ -50,7 +50,7 @@ const SettingsPage = () => {
         const allSettings = await window.electronAPI.getAllSettings();
         const savedHotkey = await window.electronAPI.getSavedHotkey();
         const loadedSettings = {
-          ai_api_key: allSettings.ai_api_key || "ms-3d1072a4-1f51-4852-a7bf-58ab9888dd97",
+          ai_api_key: allSettings.ai_api_key || "",
           ai_base_url: allSettings.ai_base_url || "https://api-inference.modelscope.cn/v1",
           ai_model: allSettings.ai_model || "Qwen/Qwen3-30B-A3B-Instruct-2507",
           enable_ai_optimization: allSettings.enable_ai_optimization !== false // 默认为true

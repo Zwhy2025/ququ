@@ -112,13 +112,13 @@ export const useTextProcessing = () => {
         model = await window.electronAPI.getSetting('ai_model') || 'Qwen/Qwen3-30B-A3B-Instruct-2507';
       } catch (error) {
         // 如果获取设置失败，回退到localStorage
-        apiKey = localStorage.getItem('ai_api_key') || 'ms-3d1072a4-1f51-4852-a7bf-58ab9888dd97';
+        apiKey = localStorage.getItem('ai_api_key') || '';
         baseUrl = localStorage.getItem('ai_base_url') || 'https://api-inference.modelscope.cn/v1';
         model = localStorage.getItem('ai_model') || 'Qwen/Qwen3-30B-A3B-Instruct-2507';
       }
     } else {
       // Web环境下使用localStorage
-      apiKey = localStorage.getItem('ai_api_key') || 'ms-3d1072a4-1f51-4852-a7bf-58ab9888dd97';
+      apiKey = localStorage.getItem('ai_api_key') || '';
       baseUrl = localStorage.getItem('ai_base_url') || 'https://api-inference.modelscope.cn/v1';
       model = localStorage.getItem('ai_model') || 'Qwen/Qwen3-30B-A3B-Instruct-2507';
     }

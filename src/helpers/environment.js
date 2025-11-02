@@ -18,7 +18,7 @@ class EnvironmentManager {
   getAIConfig() {
     // AI配置现在通过控制面板设置，不再从环境变量读取
     return {
-      apiKey: "ms-3d1072a4-1f51-4852-a7bf-58ab9888dd97",
+      apiKey: "", // API密钥应通过设置面板配置，存储在本地数据库中
       baseURL: "https://api-inference.modelscope.cn/v1",
       model: "Qwen/Qwen3-30B-A3B-Instruct-2507",
     };
