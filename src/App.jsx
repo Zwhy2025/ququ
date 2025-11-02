@@ -382,12 +382,7 @@ export default function App() {
       // 显示AI优化后的文本
       setProcessedText(optimizedResult.text);
       
-      // 提示用户点击输入框，然后延迟执行粘贴，给用户足够时间点击输入框
-      toast.info("🤖 AI文本优化完成，请点击输入框后将自动粘贴", {
-        duration: 2000
-      });
-      
-      // 延迟执行粘贴，给用户足够时间点击输入框并获得焦点
+      // 优化：用户已提前点击输入框，只需50ms延迟确保流程完成（不再显示提示）
       setTimeout(async () => {
         console.log("📋 准备粘贴AI优化后的文本:", optimizedResult.text);
         try {
@@ -401,7 +396,7 @@ export default function App() {
             description: "请点击输入框后按 Ctrl+V 粘贴"
           });
         }
-      }, 500); // 延迟500ms，给用户足够时间点击输入框
+      }, 50); // 优化：用户已提前点击输入框，只需50ms确保流程完成
       
       console.log('AI优化文本已设置:', optimizedResult.text);
     } else {
@@ -409,16 +404,13 @@ export default function App() {
       // 如果AI优化失败，则粘贴原始文本
       if (originalText) {
         console.log("📋 AI优化失败，粘贴原始文本:", originalText);
-        toast.info("AI优化失败，请点击输入框后将自动粘贴原始文本", {
-          duration: 2000
-        });
         setTimeout(async () => {
           try {
             await safePaste(originalText);
           } catch (error) {
             console.error("❌ 粘贴失败:", error);
           }
-        }, 500);
+        }, 50); // 优化：用户已提前点击输入框，只需50ms确保流程完成
       }
     }
   }, [safePaste, originalText]);

@@ -177,17 +177,16 @@ class ClipboardManager {
 
   async pasteWindows(originalClipboard) {
     return new Promise((resolve, reject) => {
-      // 添加延迟，确保用户点击输入框后输入框已获得焦点
-      // 使用更长的延迟，给用户足够时间点击输入框
+      // 优化：用户已经提前点击了输入框，只需要很小延迟确保焦点切换完成
+      // 从200ms + 50ms = 250ms 进一步优化到 50ms + 30ms = 80ms
       setTimeout(() => {
         this.safeLog("🔍 Windows: 准备执行粘贴操作");
         
         // 使用更可靠的PowerShell命令
-        // 使用wscript.shell的SendKeys，它比SendWait更可靠
-        // 先等待一下确保焦点窗口已切换，再发送粘贴命令
+        // 用户已经点击了输入框，只需要很小的延迟确保窗口焦点切换
         const pasteCommand = `
           $wshell = New-Object -ComObject wscript.shell;
-          Start-Sleep -Milliseconds 150;
+          Start-Sleep -Milliseconds 30;
           $wshell.SendKeys('^v');
         `;
         
@@ -274,7 +273,7 @@ class ClipboardManager {
           this.safeLog("💡 文本已在剪贴板，用户可以手动按 Ctrl+V 粘贴");
           resolve(); // 改为resolve，不抛出错误
         });
-      }, 500); // 增加延迟到500ms，给用户更多时间点击输入框
+      }, 50); // 优化：用户已提前点击输入框，只需50ms确保焦点切换完成
     });
   }
 
