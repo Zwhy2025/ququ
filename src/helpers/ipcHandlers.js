@@ -1,5 +1,50 @@
 const { ipcMain } = require("electron");
 
+/**
+ * 带超时和重试的 fetch 请求
+ * @param {string} url - 请求URL
+ * @param {object} options - fetch选项
+ * @param {number} timeout - 超时时间（毫秒），默认60秒
+ * @param {number} maxRetries - 最大重试次数，默认2次
+ * @returns {Promise<Response>}
+ */
+async function fetchWithTimeout(url, options = {}, timeout = 60000, maxRetries = 2) {
+  let lastError;
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      return response;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      lastError = error;
+      
+      // 如果是超时错误且还有重试机会，等待后重试
+      if ((error.name === 'AbortError' || error.code === 'UND_ERR_CONNECT_TIMEOUT') && attempt < maxRetries) {
+        const delay = (attempt + 1) * 1000; // 递增延迟：1s, 2s
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      
+      // 最后一次尝试失败或非超时错误，抛出异常
+      if (error.name === 'AbortError' || error.code === 'UND_ERR_CONNECT_TIMEOUT') {
+        throw new Error(`请求超时 (${timeout}ms)，已重试 ${attempt} 次`);
+      }
+      throw error;
+    }
+  }
+  
+  // 所有重试都失败
+  throw lastError;
+}
+
 class IPCHandlers {
   constructor(managers) {
     this.environmentManager = managers.environmentManager;
@@ -916,13 +961,15 @@ class IPCHandlers {
   async processTextWithAI(text, mode = 'optimize') {
     try {
       // 从数据库设置中获取API密钥
-      const apiKey = await this.databaseManager.getSetting('ai_api_key');
+      let apiKey = await this.databaseManager.getSetting('ai_api_key');
       if (!apiKey) {
         return {
           success: false,
           error: '请先在设置页面配置AI API密钥'
         };
       }
+      // 去除API Key中的空格，避免认证失败
+      apiKey = apiKey.trim();
 
       const prompts = {
         format: `请将以下文本进行格式化，添加适当的段落分隔，使其更易阅读：\n\n${text}`,
@@ -1008,12 +1055,18 @@ ${text}
 请直接返回优化后的文本，不需要解释过程。`
       };
 
-      const baseUrl = await this.databaseManager.getSetting('ai_base_url') || 'https://api.openai.com/v1';
-      const model = await this.databaseManager.getSetting('ai_model') || 'gpt-3.5-turbo';
+      let baseUrl = await this.databaseManager.getSetting('ai_base_url') || 'https://api-inference.modelscope.cn/v1';
+      let model = await this.databaseManager.getSetting('ai_model') || 'Qwen/Qwen3-30B-A3B-Instruct-2507';
+      // 去除配置中的空格
+      baseUrl = baseUrl ? baseUrl.trim() : 'https://api-inference.modelscope.cn/v1';
+      model = model ? model.trim() : 'Qwen/Qwen3-30B-A3B-Instruct-2507';
 
+      // 构建请求数据，参考 Python 代码的格式
       const requestData = {
         model: model,
         messages: [
+          // 注意：Python 代码中有 system 消息，但这里只在 optimize 模式时添加
+          // 实际上可以始终添加 system 消息来匹配 Python 的行为
           {
             role: 'user',
             content: prompts[mode] || prompts.optimize
@@ -1023,23 +1076,61 @@ ${text}
         max_tokens: 2000,
         stream: false
       };
+      
+      this.logger.info('请求数据详情:', {
+        model: requestData.model,
+        messagesCount: requestData.messages.length,
+        firstMessageRole: requestData.messages[0]?.role,
+        firstMessageContentLength: requestData.messages[0]?.content?.length || 0,
+        firstMessageContentPreview: requestData.messages[0]?.content?.substring(0, 100) || ''
+      });
 
+      // 记录API Key预览（用于调试）
+      const apiKeyPreview = apiKey.length > 10 
+        ? `${apiKey.substring(0, 10)}...${apiKey.substring(apiKey.length - 5)}` 
+        : '***';
+      
       this.logger.info('AI文本处理请求:', {
         baseUrl,
         model,
         mode,
+        apiKeyPreview: apiKeyPreview,
+        apiKeyLength: apiKey.length,
+        apiKeyStartsWith: apiKey.startsWith('ms-') ? 'ms-' : 'non-ms',
         inputText: text.substring(0, 100) + (text.length > 100 ? '...' : ''),
         requestData
       });
 
-      const response = await fetch(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(requestData)
+      // 确保baseUrl末尾没有斜杠，避免双斜杠问题
+      const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
+      const requestUrl = `${normalizedBaseUrl}/chat/completions`;
+      
+      // 使用带超时的 fetch，60秒超时（ModelScope API 可能响应较慢）
+      this.logger.info('开始AI请求，URL:', requestUrl);
+      this.logger.info('使用的API Key:', {
+        preview: apiKeyPreview,
+        length: apiKey.length,
+        matches: apiKey === 'ms-3d1072a4-1f51-4852-a7bf-58ab9888dd97' ? 'YES' : 'NO (使用不同的API Key)'
       });
+      let response;
+      try {
+        response = await fetchWithTimeout(requestUrl, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(requestData)
+        }, 60000);
+        this.logger.info('AI请求成功，状态码:', response.status);
+      } catch (error) {
+        this.logger.error('AI请求失败:', {
+          error: error.message,
+          stack: error.stack,
+          url: requestUrl
+        });
+        throw new Error(`AI请求失败: ${error.message}`);
+      }
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -1056,8 +1147,12 @@ ${text}
 
       this.logger.info('AI文本处理响应:', {
         status: response.status,
-        data: data,
-        usage: data.usage
+        responseModel: data.model,
+        responseId: data.id,
+        choicesCount: data.choices?.length || 0,
+        firstChoiceContent: data.choices?.[0]?.message?.content?.substring(0, 50) || 'N/A',
+        usage: data.usage,
+        fullResponse: JSON.stringify(data).substring(0, 500)
       });
 
       if (data.choices && data.choices.length > 0) {
@@ -1121,14 +1216,17 @@ ${text}
       let apiKey, baseUrl, model;
       
       if (testConfig) {
-        apiKey = testConfig.ai_api_key;
-        baseUrl = testConfig.ai_base_url || 'https://api.openai.com/v1';
-        model = testConfig.ai_model || 'gpt-3.5-turbo';
+        apiKey = testConfig.ai_api_key?.trim();
+        baseUrl = testConfig.ai_base_url?.trim() || 'https://api-inference.modelscope.cn/v1';
+        model = testConfig.ai_model?.trim() || 'Qwen/Qwen3-30B-A3B-Instruct-2507';
         this.logger.info('使用临时测试配置:', { baseUrl, model, apiKeyLength: apiKey?.length || 0 });
       } else {
-        apiKey = await this.databaseManager.getSetting('ai_api_key');
-        baseUrl = await this.databaseManager.getSetting('ai_base_url') || 'https://api.openai.com/v1';
-        model = await this.databaseManager.getSetting('ai_model') || 'gpt-3.5-turbo';
+        apiKey = await this.databaseManager.getSetting('ai_api_key') || 'ms-3d1072a4-1f51-4852-a7bf-58ab9888dd97';
+        apiKey = apiKey ? apiKey.trim() : 'ms-3d1072a4-1f51-4852-a7bf-58ab9888dd97';
+        baseUrl = await this.databaseManager.getSetting('ai_base_url') || 'https://api-inference.modelscope.cn/v1';
+        baseUrl = baseUrl ? baseUrl.trim() : 'https://api-inference.modelscope.cn/v1';
+        model = await this.databaseManager.getSetting('ai_model') || 'Qwen/Qwen3-30B-A3B-Instruct-2507';
+        model = model ? model.trim() : 'Qwen/Qwen3-30B-A3B-Instruct-2507';
         this.logger.info('使用已保存配置:', { baseUrl, model, apiKeyLength: apiKey?.length || 0 });
       }
       
@@ -1148,10 +1246,15 @@ ${text}
       });
       
       // 发送一个更有意义的测试请求
-      const testMessage = '请回复"测试成功"来确认AI服务正常工作';
+      // 注意：ModelScope API 可能需要 system 消息，参考 Python 代码
+      const testMessage = '你好';
       const requestData = {
         model: model,
         messages: [
+          {
+            role: 'system',
+            content: 'You are a helpful assistant.'
+          },
           {
             role: 'user',
             content: testMessage
@@ -1162,17 +1265,50 @@ ${text}
       };
 
       this.logger.info('发送AI测试请求:', requestData);
-
-      const response = await fetch(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(requestData)
+      
+      // 调试：记录API Key的前几位和后几位（用于调试，不完整显示）
+      const apiKeyPreview = apiKey.length > 10 
+        ? `${apiKey.substring(0, 10)}...${apiKey.substring(apiKey.length - 5)}` 
+        : '***';
+      this.logger.info('API Key预览:', { 
+        length: apiKey.length, 
+        preview: apiKeyPreview,
+        startsWith: apiKey.startsWith('ms-') ? 'ms-' : 'non-ms'
       });
 
-      this.logger.info('AI API响应状态:', response.status);
+      // 确保baseUrl末尾没有斜杠，避免双斜杠问题
+      const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
+      const requestHeaders = {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      };
+      this.logger.info('请求URL:', `${normalizedBaseUrl}/chat/completions`);
+      this.logger.info('请求头:', { 
+        'Content-Type': requestHeaders['Content-Type'],
+        'Authorization': `Bearer ${apiKeyPreview}`
+      });
+      
+      const requestUrl = `${normalizedBaseUrl}/chat/completions`;
+      
+      // 使用带超时的 fetch，60秒超时（ModelScope API 可能响应较慢）
+      this.logger.info('开始AI测试请求，URL:', requestUrl);
+      let response;
+      try {
+        response = await fetchWithTimeout(requestUrl, {
+          method: 'POST',
+          headers: requestHeaders,
+          body: JSON.stringify(requestData)
+        }, 60000);
+        this.logger.info('AI API响应状态:', response.status);
+      } catch (error) {
+        this.logger.error('AI测试请求失败:', {
+          error: error.message,
+          code: error.code,
+          stack: error.stack,
+          url: requestUrl
+        });
+        throw error;
+      }
 
       if (!response.ok) {
         const errorText = await response.text();

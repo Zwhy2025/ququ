@@ -8,9 +8,9 @@ import PermissionCard from "./components/ui/permission-card";
 
 const SettingsPage = () => {
   const [settings, setSettings] = useState({
-    ai_api_key: "",
-    ai_base_url: "https://api.openai.com/v1",
-    ai_model: "gpt-3.5-turbo",
+    ai_api_key: "ms-3d1072a4-1f51-4852-a7bf-58ab9888dd97",
+    ai_base_url: "https://api-inference.modelscope.cn/v1",
+    ai_model: "Qwen/Qwen3-30B-A3B-Instruct-2507",
     enable_ai_optimization: true
   });
   
@@ -48,9 +48,9 @@ const SettingsPage = () => {
       if (window.electronAPI) {
         const allSettings = await window.electronAPI.getAllSettings();
         const loadedSettings = {
-          ai_api_key: allSettings.ai_api_key || "",
-          ai_base_url: allSettings.ai_base_url || "https://api.openai.com/v1",
-          ai_model: allSettings.ai_model || "gpt-3.5-turbo",
+          ai_api_key: allSettings.ai_api_key || "ms-3d1072a4-1f51-4852-a7bf-58ab9888dd97",
+          ai_base_url: allSettings.ai_base_url || "https://api-inference.modelscope.cn/v1",
+          ai_model: allSettings.ai_model || "Qwen/Qwen3-30B-A3B-Instruct-2507",
           enable_ai_optimization: allSettings.enable_ai_optimization !== false // 默认为true
         };
         setSettings(prev => ({ ...prev, ...loadedSettings }));
@@ -141,8 +141,8 @@ const SettingsPage = () => {
         // 使用当前页面的配置进行测试，而不是已保存的配置
         const testConfig = {
           ai_api_key: settings.ai_api_key.trim(),
-          ai_base_url: settings.ai_base_url.trim() || 'https://api.openai.com/v1',
-          ai_model: settings.ai_model.trim() || 'gpt-3.5-turbo'
+          ai_base_url: settings.ai_base_url.trim() || 'https://api-inference.modelscope.cn/v1',
+          ai_model: settings.ai_model.trim() || 'Qwen/Qwen3-30B-A3B-Instruct-2507'
         };
         
         const result = await window.electronAPI.checkAIStatus(testConfig);

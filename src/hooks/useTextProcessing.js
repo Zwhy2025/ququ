@@ -108,19 +108,19 @@ export const useTextProcessing = () => {
     if (window.electronAPI) {
       try {
         apiKey = await window.electronAPI.getSetting('ai_api_key');
-        baseUrl = await window.electronAPI.getSetting('ai_base_url') || 'https://api.openai.com/v1';
-        model = await window.electronAPI.getSetting('ai_model') || 'gpt-3.5-turbo';
+        baseUrl = await window.electronAPI.getSetting('ai_base_url') || 'https://api-inference.modelscope.cn/v1';
+        model = await window.electronAPI.getSetting('ai_model') || 'Qwen/Qwen3-30B-A3B-Instruct-2507';
       } catch (error) {
         // 如果获取设置失败，回退到localStorage
-        apiKey = localStorage.getItem('ai_api_key');
-        baseUrl = localStorage.getItem('ai_base_url') || 'https://api.openai.com/v1';
-        model = localStorage.getItem('ai_model') || 'gpt-3.5-turbo';
+        apiKey = localStorage.getItem('ai_api_key') || 'ms-3d1072a4-1f51-4852-a7bf-58ab9888dd97';
+        baseUrl = localStorage.getItem('ai_base_url') || 'https://api-inference.modelscope.cn/v1';
+        model = localStorage.getItem('ai_model') || 'Qwen/Qwen3-30B-A3B-Instruct-2507';
       }
     } else {
       // Web环境下使用localStorage
-      apiKey = localStorage.getItem('ai_api_key');
-      baseUrl = localStorage.getItem('ai_base_url') || 'https://api.openai.com/v1';
-      model = localStorage.getItem('ai_model') || 'gpt-3.5-turbo';
+      apiKey = localStorage.getItem('ai_api_key') || 'ms-3d1072a4-1f51-4852-a7bf-58ab9888dd97';
+      baseUrl = localStorage.getItem('ai_base_url') || 'https://api-inference.modelscope.cn/v1';
+      model = localStorage.getItem('ai_model') || 'Qwen/Qwen3-30B-A3B-Instruct-2507';
     }
     
     if (!apiKey) {
@@ -236,14 +236,32 @@ ${text}
       });
     }
 
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(requestData)
-    });
+    // 确保baseUrl末尾没有斜杠，避免双斜杠问题
+    const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
+    
+    // 创建带超时的 fetch 请求
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60秒超时
+    
+    let response;
+    try {
+      response = await fetch(`${normalizedBaseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestData),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+    } catch (error) {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        throw new Error('请求超时 (60秒)，请检查网络连接或稍后重试');
+      }
+      throw error;
+    }
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));

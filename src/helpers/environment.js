@@ -18,9 +18,9 @@ class EnvironmentManager {
   getAIConfig() {
     // AI配置现在通过控制面板设置，不再从环境变量读取
     return {
-      apiKey: "",
-      baseURL: "https://api.openai.com/v1",
-      model: "gpt-3.5-turbo",
+      apiKey: "ms-3d1072a4-1f51-4852-a7bf-58ab9888dd97",
+      baseURL: "https://api-inference.modelscope.cn/v1",
+      model: "Qwen/Qwen3-30B-A3B-Instruct-2507",
     };
   }
 
