@@ -238,7 +238,8 @@ export const useRecording = () => {
                 }
 
                 // 通知UI更新并触发复制操作
-                if (useAI && finalData.processed_text && finalData.processed_text !== raw_text) {
+                // 修复：只要启用AI优化且成功获得结果，就使用优化后的文本，即使它与原始文本相同
+                if (useAI && finalData.processed_text) {
                   // 有AI优化结果时
                   const enhancedResult = {
                     ...transcriptionResult,

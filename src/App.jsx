@@ -324,9 +324,17 @@ export default function App() {
       }
     } catch (error) {
       console.error("❌ 粘贴文本失败:", error);
-      toast.error("粘贴失败", {
-        description: "请检查辅助功能权限。文本已复制到剪贴板 - 请手动使用 Cmd+V 粘贴。"
-      });
+      // Windows下即使粘贴失败，文本也在剪贴板中了，提示用户手动粘贴
+      const isWindows = navigator.platform.toLowerCase().includes('win');
+      if (isWindows) {
+        toast.info("文本已复制到剪贴板", {
+          description: "请点击输入框后按 Ctrl+V 粘贴"
+        });
+      } else {
+        toast.error("粘贴失败", {
+          description: "请检查辅助功能权限。文本已复制到剪贴板 - 请手动使用 Cmd+V 粘贴。"
+        });
+      }
     }
   }, []);
 
@@ -374,20 +382,43 @@ export default function App() {
       // 显示AI优化后的文本
       setProcessedText(optimizedResult.text);
       
-      // 自动粘贴AI优化后的文本
-      console.log("📋 准备粘贴AI优化后的文本:", optimizedResult.text);
-      await safePaste(optimizedResult.text);
-      console.log("✅ AI优化文本粘贴完成");
+      // 提示用户点击输入框，然后延迟执行粘贴，给用户足够时间点击输入框
+      toast.info("🤖 AI文本优化完成，请点击输入框后将自动粘贴", {
+        duration: 2000
+      });
       
-      toast.success("🤖 AI文本优化完成并已自动粘贴！");
+      // 延迟执行粘贴，给用户足够时间点击输入框并获得焦点
+      setTimeout(async () => {
+        console.log("📋 准备粘贴AI优化后的文本:", optimizedResult.text);
+        try {
+          await safePaste(optimizedResult.text);
+          console.log("✅ AI优化文本粘贴完成");
+          // 不显示成功提示，因为safePaste内部已经显示了
+        } catch (error) {
+          console.error("❌ 粘贴失败:", error);
+          // 粘贴失败时，文本已经在剪贴板中，提示用户手动粘贴
+          toast.info("文本已复制到剪贴板", {
+            description: "请点击输入框后按 Ctrl+V 粘贴"
+          });
+        }
+      }, 500); // 延迟500ms，给用户足够时间点击输入框
+      
       console.log('AI优化文本已设置:', optimizedResult.text);
     } else {
       console.warn('AI优化结果无效，使用原始文本:', optimizedResult);
       // 如果AI优化失败，则粘贴原始文本
       if (originalText) {
         console.log("📋 AI优化失败，粘贴原始文本:", originalText);
-        await safePaste(originalText);
-        toast.info("AI优化失败，已粘贴原始识别文本");
+        toast.info("AI优化失败，请点击输入框后将自动粘贴原始文本", {
+          duration: 2000
+        });
+        setTimeout(async () => {
+          try {
+            await safePaste(originalText);
+          } catch (error) {
+            console.error("❌ 粘贴失败:", error);
+          }
+        }, 500);
       }
     }
   }, [safePaste, originalText]);

@@ -177,34 +177,104 @@ class ClipboardManager {
 
   async pasteWindows(originalClipboard) {
     return new Promise((resolve, reject) => {
-      const pasteProcess = spawn("powershell", [
-        "-Command",
-        'Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait("^v")',
-      ]);
+      // 添加延迟，确保用户点击输入框后输入框已获得焦点
+      // 使用更长的延迟，给用户足够时间点击输入框
+      setTimeout(() => {
+        this.safeLog("🔍 Windows: 准备执行粘贴操作");
+        
+        // 使用更可靠的PowerShell命令
+        // 使用wscript.shell的SendKeys，它比SendWait更可靠
+        // 先等待一下确保焦点窗口已切换，再发送粘贴命令
+        const pasteCommand = `
+          $wshell = New-Object -ComObject wscript.shell;
+          Start-Sleep -Milliseconds 150;
+          $wshell.SendKeys('^v');
+        `;
+        
+        const pasteProcess = spawn("powershell", [
+          "-Command",
+          pasteCommand,
+        ], {
+          windowsHide: true,
+          stdio: ['ignore', 'pipe', 'pipe']
+        });
 
-      pasteProcess.on("close", (code) => {
-        if (code === 0) {
-          // 文本粘贴成功
+        let hasResolved = false;
+        let output = '';
+        let errorOutput = '';
+        
+        // 收集输出用于调试
+        pasteProcess.stdout?.on('data', (data) => {
+          output += data.toString();
+        });
+        
+        pasteProcess.stderr?.on('data', (data) => {
+          errorOutput += data.toString();
+        });
+
+        const timeoutId = setTimeout(() => {
+          if (!hasResolved) {
+            hasResolved = true;
+            try {
+              pasteProcess.kill();
+            } catch (e) {}
+            // 即使超时也尝试恢复剪贴板
+            setTimeout(() => {
+              clipboard.writeText(originalClipboard);
+            }, 100);
+            this.safeLog("⏰ Windows 粘贴超时", { output, errorOutput });
+            reject(
+              new Error(
+                `Windows 粘贴超时。文本已复制到剪贴板，请手动按 Ctrl+V 粘贴。`
+              )
+            );
+          }
+        }, 3000); // 增加超时时间到3秒
+
+        pasteProcess.on("close", (code) => {
+          if (hasResolved) return;
+          hasResolved = true;
+          clearTimeout(timeoutId);
+
+          // PowerShell成功返回时code通常是0，但也可能因为各种原因非0
+          // 即使非0，粘贴可能也成功了（因为SendKeys是异步的）
+          // 所以只要进程正常结束（没有被kill），就认为可能成功
+          if (code === 0 || code === null) {
+            // 文本粘贴可能成功
+            this.safeLog("✅ Windows 粘贴命令执行完成", { code, output, errorOutput });
+            setTimeout(() => {
+              clipboard.writeText(originalClipboard);
+              this.safeLog("🔄 原始剪贴板内容已恢复");
+            }, 200);
+            resolve();
+          } else {
+            // 命令失败
+            this.safeLog("⚠️ Windows 粘贴命令返回非零代码", { code, output, errorOutput });
+            // 即使失败也尝试恢复剪贴板
+            setTimeout(() => {
+              clipboard.writeText(originalClipboard);
+            }, 100);
+            // 不直接reject，因为文本已在剪贴板，用户可以手动粘贴
+            // 只记录日志，仍然resolve，让用户知道文本已准备好
+            this.safeLog("💡 文本已在剪贴板，用户可以手动按 Ctrl+V 粘贴");
+            resolve(); // 改为resolve，不抛出错误
+          }
+        });
+
+        pasteProcess.on("error", (error) => {
+          if (hasResolved) return;
+          hasResolved = true;
+          clearTimeout(timeoutId);
+          this.safeLog("❌ Windows 粘贴进程错误", { error: error.message, output, errorOutput });
+          // 即使失败也尝试恢复剪贴板
           setTimeout(() => {
             clipboard.writeText(originalClipboard);
           }, 100);
-          resolve();
-        } else {
-          reject(
-            new Error(
-              `Windows 粘贴失败，代码 ${code}。文本已复制到剪贴板。`
-            )
-          );
-        }
-      });
-
-      pasteProcess.on("error", (error) => {
-        reject(
-          new Error(
-            `Windows 粘贴失败: ${error.message}。文本已复制到剪贴板。`
-          )
-        );
-      });
+          // 不抛出错误，因为文本已在剪贴板
+          this.safeLog("💡 文本已在剪贴板，用户可以手动按 Ctrl+V 粘贴");
+          resolve(); // 改为resolve，不抛出错误
+        });
+      }, 500); // 增加延迟到500ms，给用户更多时间点击输入框
     });
   }
 
