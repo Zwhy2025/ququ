@@ -3,7 +3,9 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const os = require("os");
+const axios = require("axios");
 const PythonInstaller = require("./pythonInstaller");
+const DatabaseManager = require("./database");
 const { runCommand, TIMEOUTS } = require("../utils/process");
 
 // 简单的全局缓存，避免频繁检查
@@ -435,7 +437,8 @@ class FunASRManager {
 
   getDownloadScriptPath() {
     /**
-     * 获取下载脚本路径
+     * 获取下载脚本路径（已废弃，模型下载已整合到SpeechFlow）
+     * 保留此方法以兼容旧代码
      */
     if (process.env.NODE_ENV === "development") {
       return path.join(__dirname, "..", "..", "download_models.py");
@@ -450,7 +453,8 @@ class FunASRManager {
 
   async downloadModels(progressCallback = null) {
     /**
-     * 下载模型文件（使用独立的Python脚本并行下载）
+     * 下载模型文件（现在通过SpeechFlow服务器自动下载）
+     * 如果服务器未启动，则启动服务器（会自动下载缺失模型）
      */
     try {
       this.logger.info && this.logger.info('开始下载FunASR模型...');
@@ -462,105 +466,31 @@ class FunASRManager {
         return { success: true, message: "模型已存在，无需下载" };
       }
       
-      const pythonCmd = await this.findPythonExecutable();
-      const scriptPath = this.getDownloadScriptPath();
-      
-      this.logger.info && this.logger.info('启动模型下载脚本:', {
-        pythonCmd,
-        scriptPath,
-        scriptExists: fs.existsSync(scriptPath)
-      });
-      
-      if (!fs.existsSync(scriptPath)) {
-        throw new Error(`下载脚本未找到: ${scriptPath}`);
+      // 如果服务器未启动，启动服务器（会自动下载模型）
+      if (!this.serverReady) {
+        this.logger.info && this.logger.info('启动SpeechFlow服务器以自动下载模型...');
+        await this.preInitializeModels();
+        
+        // 等待服务器就绪
+        if (this.initializationPromise) {
+          await this.initializationPromise;
+        }
+        
+        // 再次检查模型状态
+        const finalCheck = await this.checkModelFiles();
+        if (finalCheck.models_downloaded) {
+          return { success: true, message: "模型下载完成" };
+        } else {
+          return { 
+            success: false, 
+            error: "模型下载失败，请检查日志",
+            missing_models: finalCheck.missing_models
+          };
+        }
       }
       
-      return new Promise((resolve, reject) => {
-        // 确保使用正确的Python环境
-        const pythonEnv = this.buildPythonEnvironment();
-        
-        const downloadProcess = spawn(pythonCmd, [scriptPath], {
-          stdio: ["pipe", "pipe", "pipe"],
-          windowsHide: true,
-          env: pythonEnv
-        });
-        
-        let hasError = false;
-        
-        downloadProcess.stdout.on("data", (data) => {
-          const lines = data.toString().split('\n').filter(line => line.trim());
-          
-          for (const line of lines) {
-            try {
-              const result = JSON.parse(line);
-              
-              if (result.error) {
-                hasError = true;
-                reject(new Error(result.error));
-                return;
-              }
-              
-              // 处理进度更新
-              if (result.stage && progressCallback) {
-                progressCallback({
-                  stage: result.stage,
-                  model: result.model,
-                  progress: result.progress,
-                  overall_progress: result.overall_progress,
-                  completed: result.completed,
-                  total: result.total
-                });
-              }
-              
-              // 处理最终结果
-              if (result.success !== undefined) {
-                if (result.success) {
-                  this.modelsDownloaded = true;
-                  resolve({ success: true, message: result.message || "模型下载完成" });
-                } else {
-                  hasError = true;
-                  reject(new Error(result.error || "模型下载失败"));
-                }
-                return;
-              }
-              
-            } catch (parseError) {
-              // 忽略非JSON输出
-              this.logger.debug && this.logger.debug('下载脚本非JSON输出:', line);
-            }
-          }
-        });
-        
-        downloadProcess.stderr.on("data", (data) => {
-          const errorOutput = data.toString();
-          this.logger.error && this.logger.error('模型下载错误输出:', errorOutput);
-        });
-        
-        downloadProcess.on("close", (code) => {
-          if (!hasError) {
-            if (code === 0) {
-              this.modelsDownloaded = true;
-              resolve({ success: true, message: "模型下载完成" });
-            } else {
-              reject(new Error(`模型下载进程退出，代码: ${code}`));
-            }
-          }
-        });
-        
-        downloadProcess.on("error", (error) => {
-          if (!hasError) {
-            reject(new Error(`启动下载进程失败: ${error.message}`));
-          }
-        });
-        
-        // 设置超时（30分钟）
-        setTimeout(() => {
-          if (!hasError) {
-            downloadProcess.kill();
-            reject(new Error('模型下载超时'));
-          }
-        }, 30 * 60 * 1000);
-      });
+      // 服务器已启动，模型应该已经自动下载了
+      return { success: true, message: "模型已通过服务器自动下载" };
       
     } catch (error) {
       this.logger.error && this.logger.error('模型下载失败:', error);
@@ -646,9 +576,14 @@ class FunASRManager {
     return this.initializationPromise;
   }
 
+  // HTTP服务器地址配置
+  getServerUrl() {
+    return `http://${this.serverHost || 'localhost'}:${this.serverPort || 8888}`;
+  }
+
   async _startFunASRServer() {
     try {
-      this.logger.info && this.logger.info('启动FunASR服务器...');
+      this.logger.info && this.logger.info('启动SpeechFlow HTTP服务器...');
       
       const status = await this.checkFunASRInstallation();
       if (!status.installed) {
@@ -658,14 +593,14 @@ class FunASRManager {
 
       const pythonCmd = await this.findPythonExecutable();
       const serverPath = this.getFunASRServerPath();
-      this.logger.info && this.logger.info('FunASR服务器配置', {
+      this.logger.info && this.logger.info('SpeechFlow服务器配置', {
         pythonCmd,
         serverPath,
         serverExists: fs.existsSync(serverPath)
       });
       
       if (!fs.existsSync(serverPath)) {
-        this.logger.error && this.logger.error('FunASR服务器脚本未找到，跳过服务器启动', { serverPath });
+        this.logger.error && this.logger.error('服务器脚本未找到，跳过服务器启动', { serverPath });
         return;
       }
 
@@ -674,156 +609,189 @@ class FunASRManager {
       
       // 构建完整的环境变量
       const pythonEnv = this.buildPythonEnvironment();
+      
+      // 确保ELECTRON_USER_DATA环境变量传递给Python进程
+      const userDataPath = process.env.ELECTRON_USER_DATA || require('electron').app.getPath('userData');
+      pythonEnv.ELECTRON_USER_DATA = userDataPath;
+
+      // 设置服务器地址和端口
+      this.serverHost = 'localhost';
+      this.serverPort = 8888;
+
+      // 获取API key（如果数据库已初始化）
+      let apiKey = null;
+      try {
+        // 尝试从数据库获取API key
+        const userDataPath = process.env.ELECTRON_USER_DATA || require('electron').app.getPath('userData');
+        const dbPath = path.join(userDataPath, 'ququ.db');
+        if (fs.existsSync(dbPath)) {
+          const dbManager = new DatabaseManager();
+          dbManager.initialize(userDataPath);
+          apiKey = dbManager.getSetting('ai_api_key', null);
+          if (apiKey) {
+            this.logger.info && this.logger.info('已从数据库获取API密钥');
+          }
+        }
+      } catch (error) {
+        this.logger.warn && this.logger.warn('获取API密钥失败，将使用默认配置', error.message);
+      }
+
+      // 构建启动参数
+      const serverArgs = [
+        serverPath,
+        "--damo-root", this.getModelCachePath(),
+        "--host", this.serverHost,
+        "--port", this.serverPort.toString()
+      ];
+      
+      // 如果存在API key，添加到参数中
+      if (apiKey) {
+        serverArgs.push("--api-key", apiKey);
+        this.logger.info && this.logger.info('将通过命令行参数传递API密钥');
+      } else {
+        // 如果没有API key，尝试使用--use-electron-db选项
+        serverArgs.push("--use-electron-db");
+        this.logger.info && this.logger.info('将尝试从Electron数据库读取API密钥');
+      }
 
       return new Promise((resolve) => {
-        this.logger.info && this.logger.info('启动FunASR Python进程', {
+        this.logger.info && this.logger.info('启动SpeechFlow Python进程（HTTP模式）', {
           command: pythonCmd,
-          args: [serverPath],
+          args: serverArgs,
           env: pythonEnv
         });
-        const cachePath = this.getModelCachePath();
-        // this.serverProcess = spawn(pythonCmd, [serverPath], {
-        //   stdio: ["pipe", "pipe", "pipe"],
-        //   windowsHide: true,
-        //   env: pythonEnv // 使用完整的Python环境变量
-        // });
-
+        
         this.serverProcess = spawn(
           pythonCmd,
-          [serverPath, "--damo-root", cachePath],   // <== 这里加上参数
+          serverArgs,
           {
-            stdio: ["pipe", "pipe", "pipe"],
+            stdio: ["ignore", "pipe", "pipe"],  // 不再使用stdin，HTTP模式
             windowsHide: true,
-            env: pythonEnv // 保持你原来的 Python 环境
+            env: pythonEnv
           }
         );
 
-        let initResponseReceived = false;
+        let serverStarted = false;
+        let initCheckCount = 0;
+        const maxInitChecks = 60; // 最多检查60次（30秒）
 
+        // 监听标准输出（日志信息）
         this.serverProcess.stdout.on("data", (data) => {
-          const lines = data.toString().split('\n').filter(line => line.trim());
-          
-          for (const line of lines) {
-            this.logger.debug && this.logger.debug('FunASR服务器输出', { line });
-            try {
-              const result = JSON.parse(line);
-              
-              if (!initResponseReceived) {
-                // 这是初始化响应
-                initResponseReceived = true;
-                if (result.success) {
-                  this.serverReady = true;
-                  this.modelsInitialized = true;
-                  this._clearModelCache(); // 清除缓存，确保状态更新
-                  this.logger.info && this.logger.info('FunASR服务器启动成功，模型已初始化');
-                } else {
-                  this.logger.error && this.logger.error('FunASR服务器初始化失败', result);
-                }
-                resolve();
-              }
-            } catch (parseError) {
-              // 忽略非JSON输出，但记录到日志
-              this.logger.debug && this.logger.debug('FunASR服务器非JSON输出', { line });
-            }
-          }
+          const output = data.toString();
+          this.logger.debug && this.logger.debug('SpeechFlow服务器输出', { output });
         });
 
+        // 监听错误输出
         this.serverProcess.stderr.on("data", (data) => {
           const errorOutput = data.toString();
-          this.logger.error && this.logger.error('FunASR服务器错误输出', { errorOutput });
-          // 同时记录到FunASR专用日志
+          this.logger.error && this.logger.error('SpeechFlow服务器错误输出', { errorOutput });
           if (this.logger.logFunASR) {
             this.logger.logFunASR('error', 'Python stderr', { errorOutput });
           }
         });
 
         this.serverProcess.on("close", (code) => {
-          this.logger.warn && this.logger.warn('FunASR服务器进程退出', { code });
+          this.logger.warn && this.logger.warn('SpeechFlow服务器进程退出', { code });
           this.serverProcess = null;
           this.serverReady = false;
           this.modelsInitialized = false;
           
-          if (!initResponseReceived) {
+          if (!serverStarted) {
             resolve();
           }
         });
 
         this.serverProcess.on("error", (error) => {
-          this.logger.error && this.logger.error('FunASR服务器进程错误', error);
+          this.logger.error && this.logger.error('SpeechFlow服务器进程错误', error);
           this.serverProcess = null;
           this.serverReady = false;
           
-          if (!initResponseReceived) {
+          if (!serverStarted) {
             resolve();
           }
         });
 
-        // 设置超时
-        setTimeout(() => {
-          if (!initResponseReceived) {
-            this.logger.warn && this.logger.warn('FunASR服务器启动超时');
+        // 等待服务器启动，通过HTTP检查状态
+        const checkServer = async () => {
+          try {
+            const response = await axios.get(`${this.getServerUrl()}/app/status`, {
+              timeout: 2000
+            }).catch(() => null);
+            
+            if (response && response.status === 200) {
+              const result = response.data;
+              if (result.success || result.installed) {
+                serverStarted = true;
+                this.serverReady = true;
+                this.modelsInitialized = true;
+                this._clearModelCache();
+                this.logger.info && this.logger.info('SpeechFlow HTTP服务器启动成功');
+                resolve();
+                return;
+              }
+            }
+          } catch (error) {
+            // 服务器可能还在启动中
+          }
+          
+          initCheckCount++;
+          if (initCheckCount < maxInitChecks) {
+            setTimeout(checkServer, 500); // 每500ms检查一次
+          } else {
+            this.logger.warn && this.logger.warn('SpeechFlow服务器启动超时');
             if (this.serverProcess) {
               this.serverProcess.kill();
             }
             resolve();
           }
-        }, 120000); // 2分钟超时
+        };
+
+        // 等待1秒后开始检查（给服务器启动时间）
+        setTimeout(checkServer, 1000);
       });
     } catch (error) {
-      this.logger.error && this.logger.error('启动FunASR服务器异常', error);
+      this.logger.error && this.logger.error('启动SpeechFlow服务器异常', error);
     }
   }
 
-  async _sendServerCommand(command) {
-    if (!this.serverProcess || !this.serverReady) {
-      throw new Error('FunASR服务器未就绪');
+  async _sendHttpRequest(endpoint, method = 'GET', body = null) {
+    if (!this.serverReady) {
+      throw new Error('SpeechFlow服务器未就绪');
     }
 
-    return new Promise((resolve, reject) => {
-      let responseReceived = false;
-      
-      const onData = (data) => {
-        if (responseReceived) return;
-        
-        const lines = data.toString().split('\n').filter(line => line.trim());
-        
-        for (const line of lines) {
-          try {
-            const result = JSON.parse(line);
-            responseReceived = true;
-            this.serverProcess.stdout.removeListener('data', onData);
-            resolve(result);
-            return;
-          } catch (parseError) {
-            // 忽略非JSON输出
-          }
-        }
+    try {
+      const url = `${this.getServerUrl()}${endpoint}`;
+      const config = {
+        method: method,
+        url: url,
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        timeout: 60000  // 60秒超时
       };
 
-      this.serverProcess.stdout.on('data', onData);
-      
-      // 发送命令
-      this.serverProcess.stdin.write(JSON.stringify(command) + '\n');
-      
-      // 设置超时
-      setTimeout(() => {
-        if (!responseReceived) {
-          responseReceived = true;
-          this.serverProcess.stdout.removeListener('data', onData);
-          reject(new Error('服务器响应超时'));
-        }
-      }, 60000); // 1分钟超时
-    });
+      if (body) {
+        config.data = body;
+      }
+
+      const response = await axios(config);
+      return response.data;
+    } catch (error) {
+      this.logger.error && this.logger.error('HTTP请求失败', error);
+      if (error.response) {
+        throw new Error(`HTTP ${error.response.status}: ${error.response.statusText}`);
+      }
+      throw error;
+    }
   }
 
   async _stopFunASRServer() {
     if (this.serverProcess) {
       try {
-        // 发送退出命令
-        await this._sendServerCommand({ action: 'exit' });
-      } catch (error) {
-        // 如果发送退出命令失败，直接杀死进程
+        // HTTP模式下，直接杀死进程
         this.serverProcess.kill();
+      } catch (error) {
+        this.logger.warn && this.logger.warn('停止服务器进程失败', error);
       }
       
       this.serverProcess = null;
@@ -1136,7 +1104,7 @@ class FunASRManager {
 
     // 如果服务器还未就绪，等待初始化完成
     if (!this.serverReady && this.initializationPromise) {
-      this.logger.info && this.logger.info('等待FunASR服务器就绪...');
+      this.logger.info && this.logger.info('等待SpeechFlow服务器就绪...');
       await this.initializationPromise;
     }
 
@@ -1144,13 +1112,12 @@ class FunASRManager {
     
     try {
       if (!this.serverReady) {
-        throw new Error('FunASR服务器未就绪，请稍后重试');
+        throw new Error('SpeechFlow服务器未就绪，请稍后重试');
       }
       
-      // 使用服务器模式
-      this.logger.info && this.logger.info('使用FunASR服务器模式进行转录');
-      const result = await this._sendServerCommand({
-        action: 'transcribe',
+      // 使用HTTP请求转录
+      this.logger.info && this.logger.info('使用HTTP模式进行转录');
+      const result = await this._sendHttpRequest('/transcribe', 'POST', {
         audio_path: tempAudioPath,
         options: options
       });
@@ -1161,10 +1128,12 @@ class FunASRManager {
       
       return {
         success: true,
-        text: result.text.trim(),
-        raw_text: result.raw_text,
+        text: result.text ? result.text.trim() : '',
+        raw_text: result.raw_text || result.text || '',
+        optimized_text: result.optimized_text || null,
         confidence: result.confidence || 0.0,
-        language: result.language || "zh-CN"
+        language: result.language || "zh-CN",
+        enhanced_by_ai: result.enhanced_by_ai || false
       };
     } catch (error) {
       throw error;
@@ -1224,30 +1193,36 @@ class FunASRManager {
   async checkStatus() {
     try {
       if (this.serverReady) {
-        return await this._sendServerCommand({ action: 'status' });
-      } else {
-        // 检查FunASR是否已安装
-        const installStatus = await this.checkFunASRInstallation();
-        const modelStatus = await this.checkModelFiles();
-        
-        let error = "FunASR未安装";
-        if (installStatus.installed) {
-          if (!modelStatus.models_downloaded) {
-            error = "模型文件未下载，请先下载模型";
-          } else {
-            error = "FunASR服务器正在启动中...";
-          }
+        try {
+          return await this._sendHttpRequest('/app/status', 'GET');
+        } catch (error) {
+          // HTTP请求失败，服务器可能未启动
+          this.serverReady = false;
+          this.modelsInitialized = false;
         }
-        
-        return {
-          success: installStatus.installed && modelStatus.models_downloaded,
-          error: error,
-          installed: installStatus.installed,
-          models_downloaded: modelStatus.models_downloaded,
-          missing_models: modelStatus.missing_models || [],
-          initializing: this.initializationPromise !== null
-        };
       }
+      
+      // 服务器未就绪，检查安装状态
+      const installStatus = await this.checkFunASRInstallation();
+      const modelStatus = await this.checkModelFiles();
+      
+      let error = "FunASR未安装";
+      if (installStatus.installed) {
+        if (!modelStatus.models_downloaded) {
+          error = "模型文件未下载，请先下载模型";
+        } else {
+          error = "SpeechFlow服务器正在启动中...";
+        }
+      }
+      
+      return {
+        success: installStatus.installed && modelStatus.models_downloaded,
+        error: error,
+        installed: installStatus.installed,
+        models_downloaded: modelStatus.models_downloaded,
+        missing_models: modelStatus.missing_models || [],
+        initializing: this.initializationPromise !== null
+      };
     } catch (error) {
       return {
         success: false,

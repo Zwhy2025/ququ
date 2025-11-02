@@ -159,23 +159,64 @@ export const useRecording = () => {
           // 准备转录数据
           const transcriptionData = {
             raw_text: raw_text,
-            text: raw_text, // 初始文本设为原始文本
+            text: raw_text, // 初始文本设为原始文本（如果服务端已优化则使用optimized_text）
             confidence: transcriptionResult.confidence || 0,
             language: transcriptionResult.language || 'zh-CN',
             duration: transcriptionResult.duration || 0,
             file_size: uint8Array.length,
           };
 
-          // 立即显示初步结果
-          if (window.onTranscriptionComplete) {
-            window.onTranscriptionComplete({ ...transcriptionResult, enhanced_by_ai: false });
+          // 如果服务端已经完成了AI优化，直接使用优化后的文本
+          if (transcriptionResult.enhanced_by_ai && transcriptionResult.optimized_text) {
+            transcriptionData.text = transcriptionResult.optimized_text;
+            transcriptionData.processed_text = transcriptionResult.optimized_text;
           }
 
-          // 异步处理AI优化和保存（只保存一次）
+          // 立即显示初步结果
+          if (window.onTranscriptionComplete) {
+            window.onTranscriptionComplete({ 
+              ...transcriptionResult, 
+              enhanced_by_ai: transcriptionResult.enhanced_by_ai || false 
+            });
+          }
+
+          // 如果服务端已经完成AI优化，直接保存并通知完成
+          if (transcriptionResult.enhanced_by_ai && transcriptionResult.optimized_text) {
+            setIsOptimizing(false);
+            // 保存转录数据
+            setTimeout(async () => {
+              try {
+                if (window.electronAPI) {
+                  const savedResult = await window.electronAPI.saveTranscription(transcriptionData);
+                  if (window.electronAPI && window.electronAPI.log) {
+                    window.electronAPI.log('info', '转录数据保存成功:', savedResult);
+                  }
+                  
+                  // 通知AI优化完成（已在服务端完成）
+                  if (window.onAIOptimizationComplete) {
+                    window.onAIOptimizationComplete({
+                      ...transcriptionResult,
+                      text: transcriptionResult.optimized_text,
+                      processed_text: transcriptionResult.optimized_text,
+                      enhanced_by_ai: true,
+                    });
+                  }
+                }
+              } catch (err) {
+                if (window.electronAPI && window.electronAPI.log) {
+                  window.electronAPI.log('error', '保存转录数据失败:', err);
+                }
+              }
+            }, 100);
+            
+            return { ...transcriptionResult, enhanced_by_ai: true };
+          }
+
+          // 异步处理AI优化和保存（如果服务端未优化）
           setIsOptimizing(true);
           setTimeout(async () => {
             try {
-              // 从设置中读取是否启用AI优化
+              // 从设置中读取是否启用AI优化（如果服务端未优化，前端继续优化）
               const useAI = await window.electronAPI.getSetting('enable_ai_optimization', true);
 
               let finalData = { ...transcriptionData };

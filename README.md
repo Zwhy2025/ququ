@@ -72,7 +72,23 @@
 - **Python 3.8+** (用于运行本地FunASR服务)
 - **macOS 10.15+**, **Windows 10+**, 或 **Linux**
 
-### 2. 项目初始化
+### 2. 安装 SpeechFlow
+
+在开始之前，需要先安装 [SpeechFlow](https://github.com/Zwhy2025/speechflow) 语音识别服务：
+
+```bash
+# 克隆 SpeechFlow 项目
+git clone https://github.com/Zwhy2025/speechflow.git
+cd speechflow
+
+# 使用 uv 安装（推荐）
+uv pip install -e .
+
+# 或使用 pip 安装
+pip install -e .
+```
+
+### 3. 项目初始化
 
 #### 方案一：使用 uv (推荐) 🌟
 
@@ -146,12 +162,20 @@ pnpm run test:python
 pnpm run dev
 ```
 
-### 3. 配置AI模型
+### 4. 配置AI模型
 启动应用后，在 **设置页面** 中填入您的AI服务商提供的 **API Key**、**Base URL** 和 **模型名称**。支持通义千问、Kimi、智谱AI等国产模型，配置将自动保存在本地。
 
-### 4. 故障排除
+### 5. 故障排除
 
 #### 常见初始化问题
+
+**问题**: `ModuleNotFoundError: No module named 'speechflow'` 或 `ImportError: cannot import name 'main' from 'speechflow.__main__'`
+```bash
+# 请先安装 SpeechFlow 项目
+git clone https://github.com/Zwhy2025/speechflow.git
+cd speechflow
+uv pip install -e .  # 或 pip install -e .
+```
 
 **问题**: `ModuleNotFoundError: No module named 'funasr'`
 ```bash
