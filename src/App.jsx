@@ -76,9 +76,9 @@ const VoiceWaveIndicator = ({ isListening }) => {
 };
 
 // 音频播放工具函数
-const playSound = () => {
+const playSound = (type = 'start') => {
   // 创建一个音调生成函数，用于录音开始和结束
-  const createBeep = (frequency = 1200, duration = 0.08, volume = 0.1) => {
+  const createBeep = (startFreq, endFreq, duration = 0.12, volume = 0.35) => {
     try {
       if (typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext)) {
         // 使用共享的音频上下文，如果不存在则创建
@@ -98,12 +98,12 @@ const playSound = () => {
         oscillator.connect(gainNode);
         gainNode.connect(sharedAudioContext.destination);
 
-        oscillator.frequency.value = frequency;
+        oscillator.frequency.value = startFreq;
         oscillator.type = 'sine';
 
-        // 创建一个简单的音调下降效果，类似"叮"的声音
-        oscillator.frequency.setValueAtTime(frequency, sharedAudioContext.currentTime);
-        oscillator.frequency.exponentialRampToValueAtTime(frequency * 0.5, sharedAudioContext.currentTime + duration);
+        // 根据类型设置音调变化：开始录音使用上升音调，停止录音使用下降音调
+        oscillator.frequency.setValueAtTime(startFreq, sharedAudioContext.currentTime);
+        oscillator.frequency.exponentialRampToValueAtTime(endFreq, sharedAudioContext.currentTime + duration);
 
         gainNode.gain.setValueAtTime(volume, sharedAudioContext.currentTime);
         gainNode.gain.exponentialRampToValueAtTime(0.00001, sharedAudioContext.currentTime + duration);
@@ -112,17 +112,23 @@ const playSound = () => {
         oscillator.stop(sharedAudioContext.currentTime + duration);
       } else {
         // 在不支持Web Audio API的环境中，尝试使用系统提示音
-        console.log('提示音: 录音状态切换');
+        console.log(`提示音: ${type === 'start' ? '录音开始' : '录音停止'}`);
       }
     } catch (error) {
       console.error('播放提示音失败:', error);
       // 如果Web Audio API不可用或失败，在控制台打印提示
-      console.log('提示音: 录音状态切换');
+      console.log(`提示音: ${type === 'start' ? '录音开始' : '录音停止'}`);
     }
   };
 
-  // 播放统一的提示音 - 更清脆的"叮"声
-  createBeep(1200, 0.08); // 1200Hz, 0.08秒，带有音调下降
+  // 根据类型播放不同的提示音
+  if (type === 'start') {
+    // 开始录音：上升音调（从800Hz到1400Hz），类似"叮"的上升音
+    createBeep(800, 1400, 0.12);
+  } else {
+    // 停止录音：下降音调（从1400Hz到600Hz），类似"咚"的下降音
+    createBeep(1400, 600, 0.12);
+  }
 };
 
 // 增强的工具提示组件
@@ -523,12 +529,12 @@ export default function App() {
     }
 
     if (!isRecording && !isRecordingProcessing) {
-      // 播放提示音
-      playSound();
+      // 播放开始录音提示音
+      playSound('start');
       startRecording();
     } else if (isRecording) {
-      // 播放提示音
-      playSound();
+      // 播放停止录音提示音
+      playSound('stop');
       stopRecording();
     }
   }, [modelStatus, isRecording, isRecordingProcessing, startRecording, stopRecording, playSound]);
